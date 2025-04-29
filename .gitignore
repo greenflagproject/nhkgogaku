@@ -178,3 +178,4 @@ doc/
 ._*
 .vscode/
 *.tar
+devenv/

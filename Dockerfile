@@ -6,11 +6,7 @@ RUN apt-get install -y locales \
 	&& locale-gen
 	# && echo "export LANG=ja_JP.UTF-8" >> ~/.bashrc
 
-RUN curl -O https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz && \
-    tar -xJf ffmpeg-release-amd64-static.tar.xz && \
-    mv ffmpeg-*/ffmpeg /usr/local/bin/ && \
-    mv ffmpeg-*/ffprobe /usr/local/bin/ && \
-    rm -rf ffmpeg-*
+RUN apt-get install -y ffmpeg
 
 ENV LAMBDA_TASK_ROOT=/var/task
 WORKDIR ${LAMBDA_TASK_ROOT}
@@ -23,7 +19,6 @@ RUN pip install -r requirements.txt
 
 # Copy function code
 COPY nhkgogaku.py ${LAMBDA_TASK_ROOT}
-# COPY ./lib/linuxarm64/* /usr/local/bin/
 
 ENV LANG=ja_JP.UTF-8
 
