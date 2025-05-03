@@ -15,7 +15,8 @@ Envs:
   NHK_DOWNLOAD_DIR                  -- データをダウンロードするフォルダ。番組名年度でフォルダが作られ、その中に音声データが格納される。
   NHK_FFMPEG_BIN                    -- ffmpegの実行コマンド。
   NHK_OUTPUT_AUDIO_FORMAT_EXTENTION -- 作成する音声データのフォーマット拡張子。m4a(デフォルト)か、mp3。
-  NHK_GOGAKU_CORNERS_URL            -- NHKらじる★らじるの番組リストを配信しているURL。JSONで提供されている。
+  NHK_GOGAKU_CORNERS_URL            -- NHKらじる★らじるの番組リストを配信しているURL。JSONで提供されている。(DEFAULT: https://www.nhk.or.jp/radio-api/app/v1/web/ondemand/corners/new_arrivals)
+  NHK_GOGAKU_SERIES_URL_FORMAT      -- NHKらじる★らじるの番組JSON URLのフォーマット情報。番組情報と配信中の音声データ情報が提供されている。(DEFAULT: https://www.nhk.or.jp/radio-api/app/v1/web/ondemand/series?site_id={series_site_id}&corner_site_id={corner_site_id})
 """
 
 @dataclass
@@ -29,8 +30,8 @@ class NhkRadioProgram:
     corner_site_id :str             #(定義ファイルに気記載するのではなく、後でNHKの番組情報から読み取って代入する)
     thumbnail_url :str              #(定義ファイルに気記載するのではなく、後でNHKの番組情報から読み取って代入する)
 
-    def url(self)->str:
-        return 'https://www.nhk.or.jp/radio-api/app/v1/web/ondemand/series?site_id='+self.series_site_id+'&corner_site_id='+self.corner_site_id #配信データのURLを作成し、データに保存
+    def url(self, audio_url_format :str)->str:
+        return audio_url_format.format(series_site_id=self.series_site_id,corner_site_id=self.corner_site_id)
 
 def decodeNhkRadioProgram(data :dict) -> NhkRadioProgram:
     program = NhkRadioProgram(id_keyword=data['id_keyword']
@@ -50,6 +51,7 @@ class ApplicationSettings:
         self.ffmpeg_bin=os.environ.get("NHK_FFMPEG_BIN","ffmpeg")
         self._FORMAT_EXTENTION="." + os.environ.get("NHK_OUTPUT_AUDIO_FORMAT_EXTENTION","m4a")    #拡張子の.をつけて変数格納する
         self._NHK_GOGAKU_CORNERS_URL=os.environ.get("NHK_GOGAKU_CORNERS_URL","https://www.nhk.or.jp/radio-api/app/v1/web/ondemand/corners/new_arrivals")
+        self._NHK_GOGAKU_SERIES_URL_FORMAT=os.environ.get("NHK_GOGAKU_SERIES_URL_FORMAT","https://www.nhk.or.jp/radio-api/app/v1/web/ondemand/series?site_id={series_site_id}&corner_site_id={corner_site_id}")
 
         radio_program = os.path.join(self.download_dir,"radio_program.json")
         with open(radio_program,'r',encoding="utf-8") as f:
@@ -74,11 +76,7 @@ def download():
     # ダウンロード先のフォルダがない場合はフォルダを作成する
     os.makedirs(applicationSettings.download_dir, exist_ok=True)
     #各語学講座のseries_site_idとcorner_site_idが記載されているJSONからIDを取得し、各講座のJSONファイルのダウンロードURLを生成する
-    series_corner_id_json = os.path.join(applicationSettings.download_dir, "series_corner_id.json")
-    urllib.request.urlretrieve(applicationSettings._NHK_GOGAKU_CORNERS_URL, series_corner_id_json)
-    with open(series_corner_id_json,'r',encoding="utf-8") as f:
-        series_corner_ids = json.load(f)
-    os.remove(series_corner_id_json)
+    series_corner_ids = json.loads(urllib.request.urlopen(applicationSettings._NHK_GOGAKU_CORNERS_URL).read().decode('utf8'))
     for series_corner_id in series_corner_ids['corners']:
         for program in applicationSettings.programs:
             if series_corner_id['title']==program.id_keyword :
@@ -89,11 +87,7 @@ def download():
     #各語学講座のストリーミングデータをダウンロードする
     for program in applicationSettings.programs:
         # JSONコンテンツを読み出す
-        bangumi_json = os.path.join(applicationSettings.download_dir, "bangumi.json")
-        urllib.request.urlretrieve(program.url(), bangumi_json)
-        with open(bangumi_json,'r',encoding="utf-8") as f:
-            json_dict = json.load(f)
-        os.remove(bangumi_json)
+        json_dict = json.loads(urllib.request.urlopen(program.url(applicationSettings._NHK_GOGAKU_SERIES_URL_FORMAT)).read().decode('utf8'))
         # ダウンロードしたファイルパスを保持する変数を初期化する
         last_download_path_only_date=""
         # 各LessonのストリーミングデータをMP3に変換してダウンロードする
@@ -138,9 +132,16 @@ def download():
             download_url=json_element['stream_url']
             #print(f"download_url:{download_url}")
             # ffmpegのダウンロード処理用コマンドラインを生成する
-            command_line=ffmpegCommandM4a(applicationSettings.ffmpeg_bin, download_url, tag_title, tag_album, tag_year, tag_date, download_tmp_path)
+            command_line=ffmpegCommand(applicationSettings._FORMAT_EXTENTION ,applicationSettings.ffmpeg_bin, download_url, tag_title, tag_album, tag_year, tag_date, download_tmp_path)
             # ダウンロード処理を実行する
             downloadCore(command_line,download_path, download_tmp_path, datetime.datetime.fromisoformat(json_element['aa_contents_id'].split(";")[4][0:25]), download_filename, program.file_size_check_standard)
+
+def ffmpegCommand(extention :str, ffmpeg_bin :str, download_url :str, tag_title :str, tag_album :str, tag_year :str, tag_date :str, download_tmp_path :str) ->str:
+    match extention:
+        case ".mp3":
+            return ffmpegCommandMp3(ffmpeg_bin, download_url, tag_title, tag_album, tag_year, tag_date, download_tmp_path)
+        case _:
+            return ffmpegCommandM4a(ffmpeg_bin, download_url, tag_title, tag_album, tag_year, tag_date, download_tmp_path)
 
 def ffmpegCommandMp3(ffmpeg_bin :str, download_url :str, tag_title :str, tag_album :str, tag_year :str, tag_date :str, download_tmp_path :str) ->str:
     command_line=f"{ffmpeg_bin}" \
